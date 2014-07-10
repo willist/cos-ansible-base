@@ -1,11 +1,63 @@
-# CSF checks
+# Verify that a brute force ssh attack gets blocked by csf
+# Uses Digital Ocean and requires environment variables
+# DO_CLIENT_ID and DO_API_KEY which can be found 
+# here: https://cloud.digitalocean.com/api_access
+
+- pip: name='dopy' version='0.2.3'
+  name: test csf | Install dopy
+
+# Make sure current user's public key is available on DO
+- name: test csf | Register Public Key
+  digital_ocean: >
+      state=present
+      command=ssh
+      name="test_pub_key"
+      ssh_pub_key="{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+      client_id="{{ lookup('env', 'DO_CLIENT_ID') }}"
+      api_key="{{ lookup('env', 'DO_API_KEY') }}"
+      wait_timeout=500
+  register: test_key
+
+# - debug: var=test_key
+
+# Create the droplet with the aforementioned key
+- name: test csf | Create Droplet
+  digital_ocean: >
+      state=active
+      command=droplet
+      name="security_droplet"
+      size_id=1
+      region_id=1
+      image_id=3240036
+      ssh_key_ids="{{test_key.ssh_key.id}}"
+      client_id="{{ lookup('env', 'DO_CLIENT_ID') }}"
+      api_key="{{ lookup('env', 'DO_API_KEY') }}"
+      wait_timeout=500
+  register: test_droplet
+
+# - debug: var=test_droplet
 
 - include: ../start_testing.yml
 
-- name: test csf | Brute Force SSH is blocked
+# ssh into new droplet and use it to trigger a temporary ban
+- name: test csf | Trigger Brute Force Temporary Ban
   connection: local
   sudo: no
-  shell: ssh {{ inventory_hostname }} -o PubkeyAuthentication=no
-  when: check_portscan
+  shell: ssh {{test_droplet.droplet.ip_address }} ssh alwaysfail@{{ inventory_hostname }} -o PubkeyAuthentication=no
+  register: ssh_result
+  failed_when: "ssh_result.rc == 0"
+  with_sequence: start=1 end="{{ csf_lf_sshd }}"
+
+# make sure the droplet is banned
+- name: test csf | Verify Brute Force Block
+  command: csf -t 
+  register: temporary_bans
+  failed_when: temporary_bans.stdout.find(test_droplet.droplet.ip_address) == -1
+  sudo: yes
+
+# unblock droplet
+- name: test csf | Cleanup Brute Force Ban
+  command: csf -dr {{ test_droplet.droplet.ip_address }}
+  sudo: yes
 
 - include: ../stop_testing.yml

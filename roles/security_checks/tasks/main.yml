@@ -25,6 +25,9 @@
 - include: tests/deny_port_scans.yml
   when: check_csf
 
+- include: tests/deny_brute_force_ssh.yml
+  when: check_ssh_brute_force_ban
+
 - include: tests/check_configuration.yml
 
 
